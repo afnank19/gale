@@ -17,17 +17,25 @@ import (
 
 type Example struct {
 	reqs int
+	respSize int64
 }
 
-func makeHTTPSRequest(e *Example, wg *sync.WaitGroup) {
+type ReqData struct {
+	host string
+	target string
+	path string
+	duration time.Duration
+}
+
+func (e *Example) makeHTTPSRequest(wg *sync.WaitGroup, rd *ReqData) {
 	defer wg.Done()
-	const target = "smiling-kerstin-afnan-we-2f62af17.koyeb.app:443"
-	const duration = 5 * time.Second
+	target := rd.target
+	duration := rd.duration
 
 	// Pre-build the raw HTTP/1.1 GET request bytes (keep-alive is default)
 	reqLines := []string{
-		"GET /api/blogs/utnmGBLv2oIOquzyXQxu HTTP/1.1",
-		"Host: smiling-kerstin-afnan-we-2f62af17.koyeb.app",
+		"GET " + rd.path + " HTTP/1.1",
+		fmt.Sprintf("Host: %s", rd.host),
 		"Connection: keep-alive", // explicit, though default
 		"",                       // end headers
 		"",
@@ -42,8 +50,9 @@ func makeHTTPSRequest(e *Example, wg *sync.WaitGroup) {
 	defer conn.Close()
 
 	tlsConn := tls.Client(conn, &tls.Config{
-		ServerName:         "smiling-kerstin-afnan-we-2f62af17.koyeb.app", // for SNI + cert validation
-		InsecureSkipVerify: false,                                         // set true only for self-signed dev servers
+		ServerName:         rd.host, // for SNI + cert validation
+		InsecureSkipVerify: false,  // set true only for self-signed dev servers
+		NextProtos: []string{"http/1.1"},
 	})
 	if err := tlsConn.Handshake(); err != nil {
 		panic(err)
@@ -73,7 +82,7 @@ func makeHTTPSRequest(e *Example, wg *sync.WaitGroup) {
 			fmt.Println(err)
 			break
 		}
-		// fmt.Println(resp.Status)
+		respSize := calculateResponseSize(resp)
 		// consume and discard body
 		if resp.ContentLength > 0 {
 			io.CopyN(io.Discard, resp.Body, resp.ContentLength)
@@ -82,6 +91,7 @@ func makeHTTPSRequest(e *Example, wg *sync.WaitGroup) {
 
 		atomic.AddUint64(&count, 1)
 		e.reqs++
+		e.respSize = respSize
 	}
 
 	fmt.Printf("Requests over one connection in %v: %d\n", duration, count)
@@ -105,22 +115,30 @@ func main() {
 
 	host, target := resolveUrlPort(argsState.url)
 	fmt.Println("Host: "+host+" | Target: ", target+" | Path: ", argsState.url.Path)
-	// var wg sync.WaitGroup
-	// var e Example
+	var rd ReqData = ReqData{
+		host: host,
+		target: target,
+		path: argsState.url.Path,
+		duration: argsState.duration,
+	}
+	var wg sync.WaitGroup
+	var e Example
 
-	// // range is connections
-	// for range 1 {
-	// 	wg.Add(1)
-	// 	// go makeHTTPSRequest(&e, &wg)
-	// 	go e.makeHTTPRequest(&wg)
-	// }
+	// range is connections
+	for range argsState.connections {
+		wg.Add(1)
+		// go makeHTTPSRequest(&e, &wg)
+		switch argsState.url.Scheme{
+		case "http":
+			go e.makeHTTPRequest(&wg, &rd)
+		case "https":
+			go e.makeHTTPSRequest(&wg, &rd)
+		}
+	}
 
-	// wg.Wait()
-	// fmt.Println("Total Reqs: ", e.reqs)
-}
-
-func makeRequest(argState *Arguments) {
-
+	wg.Wait()
+	fmt.Println("Total Reqs: ", e.reqs)
+	fmt.Println("Resp size: ", e.respSize)
 }
 
 func resolveUrlPort(url *url.URL) (host string, target string) {
@@ -145,15 +163,15 @@ func resolveUrlPort(url *url.URL) (host string, target string) {
 	return
 }
 
-func (e *Example) makeHTTPRequest(wg *sync.WaitGroup) {
+func (e *Example) makeHTTPRequest(wg *sync.WaitGroup, rd *ReqData) {
 	defer wg.Done()
-	const target = "localhost:8080"
-	const duration = 5 * time.Second
+	target := rd.target
+	duration := rd.duration
 
 	// Pre-build the raw HTTP/1.1 GET request bytes (keep-alive is default)
 	reqLines := []string{
-		"GET /api/blogs/utnmGBLv2oIOquzyXQxu HTTP/1.1",
-		"Host: localhost",
+		"GET " + rd.path + " HTTP/1.1",
+		fmt.Sprintf("Host: %s", rd.host),
 		"Connection: keep-alive", // explicit, though default
 		"",                       // end headers
 		"",
@@ -190,6 +208,7 @@ func (e *Example) makeHTTPRequest(wg *sync.WaitGroup) {
 			fmt.Println(err)
 			break
 		}
+		respSize := calculateResponseSize(resp)
 		// fmt.Println(resp.Status)
 		// consume and discard body
 		if resp.ContentLength > 0 {
@@ -198,8 +217,38 @@ func (e *Example) makeHTTPRequest(wg *sync.WaitGroup) {
 		resp.Body.Close()
 
 		atomic.AddUint64(&count, 1)
+		e.respSize = respSize
 		e.reqs++
 	}
 
 	fmt.Printf("Requests over one connection in %v: %d\n", duration, count)
+}
+
+func calculateResponseSize(resp *http.Response) int64 {
+	// Adding to to body size accounting for \r\n
+	//bSize := resp.ContentLength + 2
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		panic(err)
+	}
+
+	bSize := int64(len(body)) + 2
+	var hSize int = 0
+
+	for key, values := range resp.Header {
+		// Headers have colon ':' but the key variable doesnt so we add 1
+		// There is a space between the key and value of headers, that is omitted here so we add 1, so a total of 2 bytes added
+		hSize += len(key) + 2
+        for _, value := range values {
+			hSize += len(value)
+    	}
+		// adding 2 again to account for \r\n
+		hSize += 2
+	}
+
+	fmt.Println(hSize)
+	fmt.Println(string(body))
+
+	// The final addition here is adding the Status Line bytes
+	return bSize + int64(hSize) + int64(len(resp.Proto + " " + resp.Status + "\r\n"))
 }
