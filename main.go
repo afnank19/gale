@@ -7,17 +7,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
-
-type State struct {
-	workers     int
-	concurrency int
-	duration    time.Duration
-}
 
 type Example struct {
 	reqs int
@@ -91,33 +87,73 @@ func makeHTTPSRequest(e *Example, wg *sync.WaitGroup) {
 	fmt.Printf("Requests over one connection in %v: %d\n", duration, count)
 }
 
-func main() {
-	fmt.Println("GALE! Hammer your server")
-	// ParseArgs()
-
-	var wg sync.WaitGroup
-	var e Example
-
-	// range is connections
-	for range 100 {
-		wg.Add(1)
-		// go makeHTTPSRequest(&e, &wg)
-		go makeHTTPRequest(&e, &wg)
-	}
-
-	wg.Wait()
-	fmt.Println("Total Reqs: ", e.reqs)
+func setMaxProcs(procs int) {
+	runtime.GOMAXPROCS(procs)
 }
 
-func makeHTTPRequest(e *Example, wg *sync.WaitGroup) {
+func main() {
+	// For a 4 core 8 thread cpu, the default by Go will be 8, but best perf comes from 4 so we default to that
+	setMaxProcs(runtime.NumCPU() / 2)
+	fmt.Println("GALE! Hammer your server, Threads:", runtime.NumCPU())
+	// ParseArgs()
+
+	argsState := ParseArgs()
+
+	if argsState.threads != -1 {
+		setMaxProcs(argsState.threads)
+	}
+
+	host, target := resolveUrlPort(argsState.url)
+	fmt.Println("Host: "+host+" | Target: ", target+" | Path: ", argsState.url.Path)
+	// var wg sync.WaitGroup
+	// var e Example
+
+	// // range is connections
+	// for range 1 {
+	// 	wg.Add(1)
+	// 	// go makeHTTPSRequest(&e, &wg)
+	// 	go e.makeHTTPRequest(&wg)
+	// }
+
+	// wg.Wait()
+	// fmt.Println("Total Reqs: ", e.reqs)
+}
+
+func makeRequest(argState *Arguments) {
+
+}
+
+func resolveUrlPort(url *url.URL) (host string, target string) {
+	if url.Scheme == "http" {
+		// handleHTTPUrl()
+		host = url.Host
+
+		// host already has a port specified
+		if strings.Contains(host, ":") {
+			target = host
+		} else {
+			target = host + ":80"
+		}
+	}
+
+	if url.Scheme == "https" {
+		// hanldeHTTPSUrl()
+		host = url.Host
+		target = host + ":443"
+	}
+
+	return
+}
+
+func (e *Example) makeHTTPRequest(wg *sync.WaitGroup) {
 	defer wg.Done()
 	const target = "localhost:8080"
-	const duration = 30 * time.Second
+	const duration = 5 * time.Second
 
 	// Pre-build the raw HTTP/1.1 GET request bytes (keep-alive is default)
 	reqLines := []string{
 		"GET /api/blogs/utnmGBLv2oIOquzyXQxu HTTP/1.1",
-		"Host: localhost:8080",
+		"Host: localhost",
 		"Connection: keep-alive", // explicit, though default
 		"",                       // end headers
 		"",

@@ -3,49 +3,75 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func ParseArgs() {
-	allArgs := os.Args
-	fmt.Println(allArgs)
+var UNITS = map[string]time.Duration{
+	"s": time.Second,
+	"m": time.Minute,
+	"h": time.Hour,
+}
 
+type Arguments struct {
+	threads     int
+	connections int
+	duration    time.Duration
+	url         *url.URL
+}
+
+func ParseArgs() Arguments {
+	allArgs := os.Args
 	args := allArgs[1:]
-	fmt.Println("What we need -> ", args)
+
+	var a Arguments = Arguments{
+		threads: -1,
+	}
 
 	for _, argStr := range args {
-		fmt.Println(argStr)
 		arg, value := splitArg(argStr)
-		if value == "" { // means that argument does not have a value
-			// handleNormalArg()
-			fmt.Println("normal arg detected: ", arg)
-		}
 
-		if arg == "--worker" || arg == "-w" {
+		if arg == "--threads" || arg == "-t" {
 			value, err := strconv.Atoi(value)
 			if err != nil {
 				panic("Arg value should be an integer")
 			}
-			fmt.Println("Value -> ", value)
+
+			if value < 1 {
+				panic("SHOW USAGE")
+			}
+			a.threads = value
 			continue
 		}
-		if arg == "--concurrency" || arg == "-c" {
+		if arg == "--connections" || arg == "-c" {
 			value, err := strconv.Atoi(value)
 			if err != nil {
 				panic("Arg value should be an integer")
 			}
-			fmt.Println("Value -> ", value)
+
+			if value < 1 {
+				panic("SHOW USAGE")
+			}
+			a.connections = value
 			continue
 		}
 		if arg == "--duration" || arg == "-d" {
 			fmt.Println("Value -> ", value)
-			parseDurationValue(value)
+			d := parseDurationValue(value)
+			a.duration = d
+			continue
+		}
+		if arg == "--url" || arg == "-u" {
+			url := parseUrl(value)
+			a.url = url
 			continue
 		}
 	}
+
+	return a
 }
 
 func splitArg(arg string) (string, string) {
@@ -62,6 +88,14 @@ func splitArg(arg string) (string, string) {
 	return argTokens[0], argTokens[1]
 }
 
+func parseUrl(rawUrl string) *url.URL {
+	url, err := url.Parse(rawUrl)
+	if err != nil {
+		panic("Bad URL")
+	}
+	return url
+}
+
 func parseDurationValue(val string) time.Duration {
 	if len(val) < 1 {
 		panic("No value provided for duration")
@@ -75,22 +109,21 @@ func parseDurationValue(val string) time.Duration {
 		log.Fatalln("ERROR: Arg value should be an integer")
 	}
 
+	if value < 1 {
+		log.Fatalln("SHOW USAGE")
+	}
+
 	if value > 999999 {
 		value = 999999
 	}
 
 	var duration time.Duration
-	if lastChar == "s" {
-		duration += time.Duration(value) * time.Second
+	dMultiplier, ok := UNITS[lastChar]
+	if !ok {
+		log.Fatalln("SHOW USAGE, LAST CHAR")
 	}
 
-	if lastChar == "m" {
-		duration += time.Duration(value) * time.Minute
-	}
-
-	if lastChar == "h" {
-		duration += time.Duration(value) * time.Hour
-	}
+	duration = time.Duration(value) * dMultiplier
 
 	fmt.Println("Final Duration: ", duration)
 	return duration
