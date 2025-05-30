@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -173,6 +175,7 @@ func (e *Example) makeHTTPRequest(wg *sync.WaitGroup, rd *ReqData) {
 		"GET " + rd.path + " HTTP/1.1",
 		fmt.Sprintf("Host: %s", rd.host),
 		"Connection: keep-alive", // explicit, though default
+		"Accept-Encoding: gzip, deflate, br",
 		"",                       // end headers
 		"",
 	}
@@ -232,7 +235,16 @@ func calculateResponseSize(resp *http.Response) int64 {
 		panic(err)
 	}
 
-	bSize := int64(len(body)) + 2
+	if resp.Uncompressed {
+		fmt.Println("Uncompressed request")
+	}
+
+	bodyBytes, err := gzipCompress(string(body))
+	if err != nil {
+		fmt.Println("could not compress")
+	}
+
+	bSize := int64(len(bodyBytes)) + 2
 	var hSize int = 0
 
 	for key, values := range resp.Header {
@@ -246,9 +258,24 @@ func calculateResponseSize(resp *http.Response) int64 {
 		hSize += 2
 	}
 
-	fmt.Println(hSize)
-	fmt.Println(string(body))
+	// fmt.Println(hSize)
+	// fmt.Println(bSize)
 
 	// The final addition here is adding the Status Line bytes
 	return bSize + int64(hSize) + int64(len(resp.Proto + " " + resp.Status + "\r\n"))
+}
+
+func gzipCompress(s string) ([]byte, error) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+
+	if _, err := gz.Write([]byte(s)); err != nil {
+		return nil, fmt.Errorf("write to gzip writer: %w", err)
+	}
+
+	if err := gz.Close(); err != nil {
+		return nil, fmt.Errorf("close gzip writer: %w", err)
+	}
+
+	return buf.Bytes(), nil
 }
