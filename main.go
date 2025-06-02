@@ -1,103 +1,32 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"compress/gzip"
-	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"runtime"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
+
+	"github.com/afnank19/gale/requester"
 )
 
-type Example struct {
-	reqs int
-	respSize int64
-}
+// type Result struct {
+// 	reqs int
+// 	respSize int64 // Collective size of all responses in bytes
+// 	latency []time.Duration
+// 	statusCodes []int
+// 	testDuration time.Duration
+// }
 
-type ReqData struct {
-	host string
-	target string
-	path string
-	duration time.Duration
-}
-
-func (e *Example) makeHTTPSRequest(wg *sync.WaitGroup, rd *ReqData) {
-	defer wg.Done()
-	target := rd.target
-	duration := rd.duration
-
-	// Pre-build the raw HTTP/1.1 GET request bytes (keep-alive is default)
-	reqLines := []string{
-		"GET " + rd.path + " HTTP/1.1",
-		fmt.Sprintf("Host: %s", rd.host),
-		"Connection: keep-alive", // explicit, though default
-		"",                       // end headers
-		"",
-	}
-	rawReq := []byte(strings.Join(reqLines, "\r\n"))
-
-	// Open one TCP connection
-	conn, err := net.Dial("tcp", target)
-	if err != nil {
-		panic(err)
-	}
-	defer conn.Close()
-
-	tlsConn := tls.Client(conn, &tls.Config{
-		ServerName:         rd.host, // for SNI + cert validation
-		InsecureSkipVerify: false,  // set true only for self-signed dev servers
-		NextProtos: []string{"http/1.1"},
-	})
-	if err := tlsConn.Handshake(); err != nil {
-		panic(err)
-	}
-	defer tlsConn.Close()
-
-	reader := bufio.NewReader(tlsConn)
-	writer := bufio.NewWriter(tlsConn)
-
-	var count uint64
-	deadline := time.Now().Add(duration)
-
-	for time.Now().Before(deadline) {
-		// send request
-		if _, err := writer.Write(rawReq); err != nil {
-			break
-		}
-		if err := writer.Flush(); err != nil {
-			break
-		}
-
-		// read response
-		// we only care about consuming the headers and body (if any)
-		// http.ReadResponse needs a *http.Request for context; use minimal stub
-		resp, err := http.ReadResponse(reader, &http.Request{Method: "GET"})
-		if err != nil {
-			fmt.Println(err)
-			break
-		}
-		respSize := calculateResponseSize(resp)
-		// consume and discard body
-		if resp.ContentLength > 0 {
-			io.CopyN(io.Discard, resp.Body, resp.ContentLength)
-		}
-		resp.Body.Close()
-
-		atomic.AddUint64(&count, 1)
-		e.reqs++
-		e.respSize = respSize
-	}
-
-	fmt.Printf("Requests over one connection in %v: %d\n", duration, count)
-}
+// type ReqData struct {
+// 	host string
+// 	scheme string
+// 	target string
+// 	path string
+// 	duration time.Duration
+// }
 
 func setMaxProcs(procs int) {
 	runtime.GOMAXPROCS(procs)
@@ -117,30 +46,28 @@ func main() {
 
 	host, target := resolveUrlPort(argsState.url)
 	fmt.Println("Host: "+host+" | Target: ", target+" | Path: ", argsState.url.Path)
-	var rd ReqData = ReqData{
-		host: host,
-		target: target,
-		path: argsState.url.Path,
-		duration: argsState.duration,
+	var rd requester.ReqData = requester.ReqData{
+		Host: host,
+		Scheme: argsState.url.Scheme,
+		Target: target,
+		Path: argsState.url.Path,
+		Duration: argsState.duration,
 	}
 	var wg sync.WaitGroup
-	var e Example
+	var r requester.Result
+	r.TestDuration = argsState.duration
 
 	// range is connections
 	for range argsState.connections {
 		wg.Add(1)
-		// go makeHTTPSRequest(&e, &wg)
-		switch argsState.url.Scheme{
-		case "http":
-			go e.makeHTTPRequest(&wg, &rd)
-		case "https":
-			go e.makeHTTPSRequest(&wg, &rd)
-		}
+		go r.MakeRequest(&wg, &rd)
 	}
 
 	wg.Wait()
-	fmt.Println("Total Reqs: ", e.reqs)
-	fmt.Println("Resp size: ", e.respSize)
+	fmt.Println("Total Reqs: ", r.Reqs)
+	fmt.Println("Resp size: ", r.RespSize / 1000, "KB")
+	fmt.Println("Report:", requester.GenerateReport(r))
+	// fmt.Println("Latency Slice :", e.latency)
 }
 
 func resolveUrlPort(url *url.URL) (host string, target string) {
@@ -165,86 +92,103 @@ func resolveUrlPort(url *url.URL) (host string, target string) {
 	return
 }
 
-func (e *Example) makeHTTPRequest(wg *sync.WaitGroup, rd *ReqData) {
-	defer wg.Done()
-	target := rd.target
-	duration := rd.duration
+// func (r *Result) makeRequest(wg *sync.WaitGroup, rd *ReqData) {
+// 	defer wg.Done()
+// 	target := rd.target
+// 	duration := rd.duration
 
-	// Pre-build the raw HTTP/1.1 GET request bytes (keep-alive is default)
-	reqLines := []string{
-		"GET " + rd.path + " HTTP/1.1",
-		fmt.Sprintf("Host: %s", rd.host),
-		"Connection: keep-alive", // explicit, though default
-		"Accept-Encoding: gzip, deflate, br",
-		"",                       // end headers
-		"",
-	}
-	rawReq := []byte(strings.Join(reqLines, "\r\n"))
+// 	// Pre-build the raw HTTP/1.1 GET request bytes (keep-alive is default)
+// 	reqLines := []string{
+// 		"GET " + rd.path + " HTTP/1.1",
+// 		fmt.Sprintf("Host: %s", rd.host),
+// 		"Connection: keep-alive", // explicit, though default
+// 		"Accept-Encoding: gzip, deflate, br",
+// 		"",                       // end headers
+// 		"",
+// 	}
+// 	rawReq := []byte(strings.Join(reqLines, "\r\n"))
 
-	// Open one TCP connection
-	conn, err := net.Dial("tcp", target)
-	if err != nil {
-		panic(err)
-	}
-	defer conn.Close()
+// 	// Open one TCP connection
+// 	conn, err := net.Dial("tcp", target)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
+// 	var reader *bufio.Reader
+// 	var writer *bufio.Writer
 
-	var count uint64
-	deadline := time.Now().Add(duration)
+// 	if rd.scheme == "http" {
+// 		reader = bufio.NewReader(conn)
+// 		writer = bufio.NewWriter(conn)
+// 	}
 
-	for time.Now().Before(deadline) {
-		// send request
-		if _, err := writer.Write(rawReq); err != nil {
-			break
-		}
-		if err := writer.Flush(); err != nil {
-			break
-		}
+// 	if (rd.scheme == "https") {
+// 		tlsConn := tls.Client(conn, &tls.Config{
+// 			ServerName:         rd.host, // for SNI + cert validation
+// 			InsecureSkipVerify: false,  // set true only for self-signed dev servers
+// 			NextProtos: []string{"http/1.1"},
+// 		})
+// 		if err := tlsConn.Handshake(); err != nil {
+// 			panic(err)
+// 		}
+// 		defer tlsConn.Close()
 
-		// read response
-		// we only care about consuming the headers and body (if any)
-		// http.ReadResponse needs a *http.Request for context; use minimal stub
-		resp, err := http.ReadResponse(reader, &http.Request{Method: "GET"})
-		if err != nil {
-			fmt.Println(err)
-			break
-		}
-		respSize := calculateResponseSize(resp)
-		// fmt.Println(resp.Status)
-		// consume and discard body
-		if resp.ContentLength > 0 {
-			io.CopyN(io.Discard, resp.Body, resp.ContentLength)
-		}
-		resp.Body.Close()
+// 		reader = bufio.NewReader(tlsConn)
+// 		writer = bufio.NewWriter(tlsConn)
+// 	}
 
-		atomic.AddUint64(&count, 1)
-		e.respSize = respSize
-		e.reqs++
-	}
+// 	var count uint64
+// 	deadline := time.Now().Add(duration)
 
-	fmt.Printf("Requests over one connection in %v: %d\n", duration, count)
-}
+// 	for time.Now().Before(deadline) {
+// 		// Start Req
+// 		start := time.Now()
+// 		// send request
+// 		if _, err := writer.Write(rawReq); err != nil {
+// 			break
+// 		}
+// 		if err := writer.Flush(); err != nil {
+// 			break
+// 		}
+
+// 		// read response
+// 		// we only care about consuming the headers and body (if any)
+// 		// http.ReadResponse needs a *http.Request for context; use minimal stub
+// 		resp, err := http.ReadResponse(reader, &http.Request{Method: "GET"})
+// 		if err != nil {
+// 			fmt.Println(err)
+// 			break
+// 		}
+// 		// End Req
+// 		end := time.Now()
+
+// 		latency := end.Sub(start)
+// 		// fmt.Println("TIme for req: ", elapsed)
+// 		respSize := calculateResponseSize(resp)
+// 		// consume and discard body
+// 		if resp.ContentLength > 0 {
+// 			io.CopyN(io.Discard, resp.Body, resp.ContentLength)
+// 		}
+// 		resp.Body.Close()
+
+// 		atomic.AddUint64(&count, 1)
+// 		r.reqs++
+// 		r.respSize += respSize
+// 		r.latency = append(r.latency, latency)
+// 		r.statusCodes = append(r.statusCodes, resp.StatusCode)
+// 	}
+
+// 	fmt.Printf("Requests over one connection in %v: %d\n", duration, count)
+// }
 
 func calculateResponseSize(resp *http.Response) int64 {
-	// Adding to to body size accounting for \r\n
-	//bSize := resp.ContentLength + 2
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
-	}
-
-	if resp.Uncompressed {
-		fmt.Println("Uncompressed request")
-	}
-
-	bodyBytes, err := gzipCompress(string(body))
-	if err != nil {
-		fmt.Println("could not compress")
-	}
-
-	bSize := int64(len(bodyBytes)) + 2
+	}	
+	// Adding to to body size accounting for \r\n
+	bSize := int64(len(body)) + 2
 	var hSize int = 0
 
 	for key, values := range resp.Header {
@@ -263,19 +207,4 @@ func calculateResponseSize(resp *http.Response) int64 {
 
 	// The final addition here is adding the Status Line bytes
 	return bSize + int64(hSize) + int64(len(resp.Proto + " " + resp.Status + "\r\n"))
-}
-
-func gzipCompress(s string) ([]byte, error) {
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-
-	if _, err := gz.Write([]byte(s)); err != nil {
-		return nil, fmt.Errorf("write to gzip writer: %w", err)
-	}
-
-	if err := gz.Close(); err != nil {
-		return nil, fmt.Errorf("close gzip writer: %w", err)
-	}
-
-	return buf.Bytes(), nil
 }
