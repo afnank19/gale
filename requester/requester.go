@@ -5,20 +5,22 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
 type Result struct {
-	Reqs int
+	Reqs int // total number of requests made
 	RespSize int64 // Collective size of all responses in bytes
 	Latency []time.Duration
-	StatusCodes []int
+	StatusCodes map[int]int
 	TestDuration time.Duration
+
+	mu sync.Mutex
 }
 
 type ReqData struct {
@@ -48,7 +50,7 @@ func (r *Result) MakeRequest(wg *sync.WaitGroup, rd *ReqData) {
 	// Open one TCP connection
 	conn, err := net.Dial("tcp", target)
 	if err != nil {
-		panic(err)
+		log.Fatalln("Could not connect:", err)
 	}
 	defer conn.Close()
 
@@ -67,7 +69,8 @@ func (r *Result) MakeRequest(wg *sync.WaitGroup, rd *ReqData) {
 			NextProtos: []string{"http/1.1"},
 		})
 		if err := tlsConn.Handshake(); err != nil {
-			panic(err)
+			fmt.Println(err)
+			return
 		}
 		defer tlsConn.Close()
 
@@ -75,16 +78,16 @@ func (r *Result) MakeRequest(wg *sync.WaitGroup, rd *ReqData) {
 		writer = bufio.NewWriter(tlsConn)
 	}
 
-	var count uint64
+	// var count uint64
 	deadline := time.Now().Add(duration)
 
 	for time.Now().Before(deadline) {
 		// Start Req
-		start := time.Now()
 		// send request
 		if _, err := writer.Write(rawReq); err != nil {
 			break
 		}
+		start := time.Now()
 		if err := writer.Flush(); err != nil {
 			break
 		}
@@ -93,14 +96,14 @@ func (r *Result) MakeRequest(wg *sync.WaitGroup, rd *ReqData) {
 		// we only care about consuming the headers and body (if any)
 		// http.ReadResponse needs a *http.Request for context; use minimal stub
 		resp, err := http.ReadResponse(reader, &http.Request{Method: "GET"})
+		end := time.Now()
+		latency := end.Sub(start)
+
 		if err != nil {
 			fmt.Println(err)
 			break
 		}
 		// End Req
-		end := time.Now()
-
-		latency := end.Sub(start)
 		// fmt.Println("TIme for req: ", elapsed)
 		respSize := calculateResponseSize(resp)
 		// consume and discard body
@@ -109,14 +112,16 @@ func (r *Result) MakeRequest(wg *sync.WaitGroup, rd *ReqData) {
 		}
 		resp.Body.Close()
 
-		atomic.AddUint64(&count, 1)
+		// atomic.AddUint64(&count, 1)
+		r.mu.Lock()
 		r.Reqs++
 		r.RespSize += respSize
 		r.Latency = append(r.Latency, latency)
-		r.StatusCodes = append(r.StatusCodes, resp.StatusCode)
+		r.StatusCodes[resp.StatusCode]++
+		r.mu.Unlock()
 	}
 
-	fmt.Printf("Requests over one connection in %v: %d\n", duration, count)
+	// mt.Printf("Requests over one connection in %v: %d\n", duration, count)
 }
 
 func calculateResponseSize(resp *http.Response) int64 {

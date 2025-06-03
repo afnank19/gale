@@ -21,6 +21,7 @@ type Arguments struct {
 	connections int
 	duration    time.Duration
 	url         *url.URL
+	urlStr 		string
 }
 
 func ParseArgs() Arguments {
@@ -65,6 +66,7 @@ func ParseArgs() Arguments {
 			continue
 		}
 		if arg == "--url" || arg == "-u" {
+			a.urlStr = value
 			url := parseUrl(value)
 			a.url = url
 			continue
