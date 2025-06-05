@@ -1,6 +1,10 @@
 package requester
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+	"runtime"
+)
 
 func DisplayReport(report *Report) {
 	fmt.Println("Stats:")
@@ -9,9 +13,24 @@ func DisplayReport(report *Report) {
 	fmt.Println("  Latency-> Avg:", report.AvgLatency,"| Std Dev:", report.StdDev, "| Max:", report.Max, "| Min:", report.Min)
 
 	printStatusCodeAnalysis(report.StatusCodes)
-	
+
 	fmt.Println("\nRequests/sec:", report.Rps)
 	fmt.Println("Transfer/sec:", report.Tps, "MB")
+}
+
+func DisplayTestParameters(duration, url string, connections int ) {
+	fmt.Printf("Running %s test on %s\n", duration, url)
+	fmt.Printf("  %d threads with %d connections\n", runtime.GOMAXPROCS(0), connections)
+}
+
+func ShowUsage() {
+	fmt.Printf("-USAGE-\n\n")
+	fmt.Printf("Flag Structure: -[flagletter]=[value] OR --[flagname]=[value]\n")
+	fmt.Printf("  --threads OR -t\t\tNumber of maximum threads to use. Default is No. of physical cores you have\n")
+	fmt.Printf("  --connections OR -c\t\tNumber of concurrent connections. Ex: -c=10\n")
+	fmt.Printf("  --duration OR -d\t\tTime to run the test. Ex: -d=10s (Units can be: s,m,h)\n")
+	fmt.Printf("  --url OR -u\t\t\tThe url of the server. Ex: http://localhost:3000\n (REQUIRED)")
+	os.Exit(1)
 }
 
 func convertBytes(bytes int64) (string) {

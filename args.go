@@ -2,12 +2,13 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/afnank19/gale/requester"
 )
 
 var UNITS = map[string]time.Duration{
@@ -15,6 +16,8 @@ var UNITS = map[string]time.Duration{
 	"m": time.Minute,
 	"h": time.Hour,
 }
+
+const MARKED = "marked"
 
 type Arguments struct {
 	threads     int
@@ -24,83 +27,114 @@ type Arguments struct {
 	urlStr 		string
 }
 
+// The code here is not well written.
+// It will be reworked, but since this is not the projects goal, i don't want to waste
+// time on it
 func ParseArgs() Arguments {
 	allArgs := os.Args
 	args := allArgs[1:]
 
 	var a Arguments = Arguments{
 		threads: -1,
+		connections: 10,
+		duration: 10 * time.Second,
+		urlStr: "",
 	}
+
+	var argMap map[string]string = make(map[string]string)
 
 	for _, argStr := range args {
 		arg, value := splitArg(argStr)
 
 		if arg == "--threads" || arg == "-t" {
+			checkIfArgParsed(argMap, arg)
+			argMap["--threads"] = MARKED
+			argMap["-t"] = MARKED
+
 			value, err := strconv.Atoi(value)
 			if err != nil {
-				panic("Arg value should be an integer")
+				requester.ShowUsage()
 			}
 
 			if value < 1 {
-				panic("SHOW USAGE")
+				requester.ShowUsage()
 			}
 			a.threads = value
 			continue
-		}
-		if arg == "--connections" || arg == "-c" {
+		} else if arg == "--connections" || arg == "-c" {
+			checkIfArgParsed(argMap, arg)
+			argMap["--connections"] = MARKED
+			argMap["-c"] = MARKED
+
 			value, err := strconv.Atoi(value)
 			if err != nil {
-				panic("Arg value should be an integer")
+				requester.ShowUsage()
 			}
 
 			if value < 1 {
-				panic("SHOW USAGE")
+				requester.ShowUsage()
 			}
 			a.connections = value
 			continue
-		}
-		if arg == "--duration" || arg == "-d" {
-			fmt.Println("Value -> ", value)
+		} else if arg == "--duration" || arg == "-d" {
+			checkIfArgParsed(argMap, arg)
+			argMap["--duration"] = MARKED
+			argMap["-d"] = MARKED
+
 			d := parseDurationValue(value)
 			a.duration = d
 			continue
-		}
-		if arg == "--url" || arg == "-u" {
+		} else if arg == "--url" || arg == "-u" {
+			checkIfArgParsed(argMap, arg)
+			argMap["--url"] = MARKED
+			argMap["-u"] = MARKED
+
 			a.urlStr = value
 			url := parseUrl(value)
 			a.url = url
 			continue
+		} else {
+			fmt.Printf("ERROR: Unknown flag?\n")
+			requester.ShowUsage()
 		}
+	}
+
+	if a.urlStr == "" {
+		requester.ShowUsage()
 	}
 
 	return a
 }
 
+func checkIfArgParsed(argMap map[string]string, currArg string) {
+	_, exists := argMap[currArg]
+	if exists {
+		fmt.Printf("ERROR: repeating arguments\n")
+		requester.ShowUsage()
+	}
+}
+
 func splitArg(arg string) (string, string) {
 	argTokens := strings.Split(arg, "=")
 
-	if len(argTokens) < 2 {
-		return arg, ""
+	if len(argTokens) < 2 || len(argTokens) > 2 {
+		requester.ShowUsage()
 	}
-
-	if len(argTokens) > 2 {
-		panic("Bad argument provided")
-	}
-
+	
 	return argTokens[0], argTokens[1]
 }
 
 func parseUrl(rawUrl string) *url.URL {
 	url, err := url.Parse(rawUrl)
 	if err != nil {
-		panic("Bad URL")
+		requester.ShowUsage()
 	}
 	return url
 }
 
 func parseDurationValue(val string) time.Duration {
 	if len(val) < 1 {
-		panic("No value provided for duration")
+		requester.ShowUsage()
 	}
 
 	lastChar := val[len(val)-1:]
@@ -108,11 +142,11 @@ func parseDurationValue(val string) time.Duration {
 	numVal := val[:len(val)-1]
 	value, err := strconv.Atoi(numVal)
 	if err != nil {
-		log.Fatalln("ERROR: Arg value should be an integer")
+		requester.ShowUsage()
 	}
 
 	if value < 1 {
-		log.Fatalln("SHOW USAGE")
+		requester.ShowUsage()
 	}
 
 	if value > 999999 {
@@ -122,11 +156,10 @@ func parseDurationValue(val string) time.Duration {
 	var duration time.Duration
 	dMultiplier, ok := UNITS[lastChar]
 	if !ok {
-		log.Fatalln("SHOW USAGE, LAST CHAR")
+		requester.ShowUsage()
 	}
 
 	duration = time.Duration(value) * dMultiplier
 
-	fmt.Println("Final Duration: ", duration)
 	return duration
 }

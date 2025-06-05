@@ -78,7 +78,6 @@ func (r *Result) MakeRequest(wg *sync.WaitGroup, rd *ReqData) {
 		writer = bufio.NewWriter(tlsConn)
 	}
 
-	// var count uint64
 	deadline := time.Now().Add(duration)
 
 	for time.Now().Before(deadline) {
@@ -104,7 +103,6 @@ func (r *Result) MakeRequest(wg *sync.WaitGroup, rd *ReqData) {
 			break
 		}
 		// End Req
-		// fmt.Println("TIme for req: ", elapsed)
 		respSize := calculateResponseSize(resp)
 		// consume and discard body
 		if resp.ContentLength > 0 {
@@ -112,7 +110,6 @@ func (r *Result) MakeRequest(wg *sync.WaitGroup, rd *ReqData) {
 		}
 		resp.Body.Close()
 
-		// atomic.AddUint64(&count, 1)
 		r.mu.Lock()
 		r.Reqs++
 		r.RespSize += respSize
@@ -120,8 +117,6 @@ func (r *Result) MakeRequest(wg *sync.WaitGroup, rd *ReqData) {
 		r.StatusCodes[resp.StatusCode]++
 		r.mu.Unlock()
 	}
-
-	// mt.Printf("Requests over one connection in %v: %d\n", duration, count)
 }
 
 func calculateResponseSize(resp *http.Response) int64 {

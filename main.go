@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/url"
 	"runtime"
 	"strings"
@@ -17,7 +16,7 @@ func setMaxProcs(procs int) {
 func main() {
 	// For a 4 core 8 thread cpu, the default by Go will be 8, but best perf comes from 4 so we default to that
 	setMaxProcs(runtime.NumCPU() / 2)
-	fmt.Println("GALE! Hammer your server.")
+	// fmt.Println("GALE! Hammer your server.")
 
 	argsState := ParseArgs()
 
@@ -34,6 +33,8 @@ func main() {
 		Path: argsState.url.Path,
 		Duration: argsState.duration,
 	}
+
+	requester.DisplayTestParameters(argsState.duration.String(), argsState.urlStr, argsState.connections)
 
 	var wg sync.WaitGroup
 	var r requester.Result
