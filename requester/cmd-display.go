@@ -12,6 +12,7 @@ func DisplayReport(report *Report) {
 	fmt.Println("  Total KB Transferred:", convertBytes(report.TotalBytes))
 	fmt.Println("  Latency-> Avg:", report.AvgLatency,"| Std Dev:", report.StdDev, "| Max:", report.Max, "| Min:", report.Min)
 
+	printLatencyPercentiles(report.Percentiles)
 	printStatusCodeAnalysis(report.StatusCodes)
 
 	fmt.Println("\nRequests/sec:", report.Rps)
@@ -67,4 +68,12 @@ func printStatusCodeAnalysis(statusCodes map[int]int) {
 	if non200Count > 0 {
 		fmt.Println("Non 2XX or 3XX response count:", non200Count)
 	}
+}
+
+func printLatencyPercentiles(p Percentiles) {
+	fmt.Println("\nLatency Distribution")
+	fmt.Println("  50th:", p.P50)
+	fmt.Println("  75th:", p.P75)
+	fmt.Println("  90th:", p.P90)
+	fmt.Println("  99th:", p.P99)
 }
