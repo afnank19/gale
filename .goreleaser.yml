@@ -2,7 +2,7 @@
 project_name: gale
 
 builds:
-  - main: ./main.go
+  - main: .
     binary: gale
     goos:
       - darwin
